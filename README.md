@@ -14,6 +14,7 @@
   - [Power save mode](#power-save-mode)
   - [Usefull extra commands](#usefull-extra-commands)
   - [Hardware Design](#hardware-design)
+  - [Libraries](#libraries)
 
 ## SMS Config
 
@@ -133,3 +134,7 @@ AT+CFUN=6|OK|Reset device
 
 ## Hardware Design
 More information about the modem can be found here: [Hardware Design](https://simcom.ee/documents/SIM7600E/SIM7600%20Series%20Hardware%20Design_V1.03.pdf)
+
+## Libraries
+
+1. FreeRTOS_SAMD21: https://github.com/BriscoeTech/Arduino-FreeRTOS-SAMD21.git
