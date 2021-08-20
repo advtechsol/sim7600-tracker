@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <RTCZero.h>
 #include <NMEAGPS.h>
+#include <FreeRTOS_SAMD21.h>
 
 #include "..\Board.h"
 #include "..\Defines.h"
@@ -21,12 +22,13 @@
 /******************************************************************
 *********                  Local Objects                  *********
 ******************************************************************/
-RTCZero rtc;// Create an rtc object
+RTCZero rtc; // Create an rtc object
 extern gps_fix fix;
 /******************************************************************
 *********                  Local Variables                *********
 ******************************************************************/
-volatile bool logSensorDataNow = false;             //a variable to keep check of the state.
+volatile bool logSensorDataNow = false; //a variable to keep check of the state.
+volatile int edges[2];
 /******************************************************************
 *********          Local Function Definitions             *********
 ******************************************************************/
@@ -76,7 +78,7 @@ void set_rtc()
     Serial.print("current minutes: ");
     Serial.println(rtc.getMinutes());
     Serial.print("alarm will activate in ");
-    Serial.println(rtc.getMinutes() + APP_DEVICE_NO_MOTION_INTERVAL_S/60UL);
+    Serial.println(rtc.getMinutes() + APP_DEVICE_NO_MOTION_INTERVAL_S / 60UL);
     Serial.print(rtc.getYear());
     Serial.print(rtc.getMonth());
     Serial.println(rtc.getDay());
@@ -97,7 +99,7 @@ void set_alarm()
     int rtc_hours = rtc.getHours(); // Read the RTC hours
     Serial.print("rtc_hours: ");
     Serial.println(rtc_hours);
-    rtc_mins = rtc_mins + APP_DEVICE_NO_MOTION_INTERVAL_S/60UL; // Add the BEACON_INTERVAL to the RTC minutes
+    rtc_mins = rtc_mins + APP_DEVICE_NO_MOTION_INTERVAL_S / 60UL; // Add the BEACON_INTERVAL to the RTC minutes
     while (rtc_mins >= 60)
     {                              // If there has been an hour roll over
         rtc_mins = rtc_mins - 60;  // Subtract 60 minutes
@@ -152,17 +154,17 @@ void alarmMatch()
     if (check_movement_timeout())
     {
         Serial.println("While in motion ALARM occured...");
-        rtc_mins = rtc_mins + APP_DEVICE_IN_MOTION_INTERVAL_S/60UL; // Add the BEACON_INTERVAL to the RTC minutes}
+        rtc_mins = rtc_mins + APP_DEVICE_IN_MOTION_INTERVAL_S / 60UL; // Add the BEACON_INTERVAL to the RTC minutes}
     }
     else
     {
         Serial.println("no motion ALARM occured...");
-        rtc_mins = rtc_mins + APP_DEVICE_NO_MOTION_INTERVAL_S/60UL; // Add the MOVEMENT_INTERVAL to the RTC minutes}
+        rtc_mins = rtc_mins + APP_DEVICE_NO_MOTION_INTERVAL_S / 60UL; // Add the MOVEMENT_INTERVAL to the RTC minutes}
     }
 
     while (rtc_mins >= 60)
-    {                    // If there has been an hour roll over
-        rtc_mins -= 60;  // Subtract 60 minutes
+    {                   // If there has been an hour roll over
+        rtc_mins -= 60; // Subtract 60 minutes
         rtc_hours += 1; // Add an hour
     }
     rtc_hours = rtc_hours % 24;    // Check for a day roll over
@@ -182,7 +184,7 @@ void wake_device()
     Serial.begin(115200);
     delay(3000);
     Serial.println("device awake");
-    
+
     init_gps();
 }
 
@@ -198,6 +200,126 @@ void get_epoch_time_bytes(uint8_t *dataBuf)
     *dataBuf++ = (uint8_t)((epochTimeNow >> 8) & 0xff);
     *dataBuf++ = (uint8_t)((epochTimeNow >> 16) & 0xff);
     *dataBuf++ = (uint8_t)((epochTimeNow >> 24) & 0xff);
+}
+
+// - - - - - - - - Delay Helpers - - - - - - - -
+void os_delay_Us(int us)
+{
+    vTaskDelay(us / portTICK_PERIOD_US);
+}
+
+void os_delay_Ms(int ms)
+{
+    vTaskDelay((ms * 1000) / portTICK_PERIOD_US);
+}
+
+void os_delay_S(int s)
+{
+    while (s > 0)
+    {
+        os_delay_Ms(1000);
+        s--;
+    }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - -
+int find_chr(const char *text, const int start, const char chr)
+{
+    char *pch;
+    pch = (char *)memchr(&text[start], chr, strlen(text));
+    if (pch != NULL)
+    {
+        return min(pch - text, strlen(text) - 1);
+    }
+}
+
+void find_edges(const char *text, int order, const char chr)
+{
+    int start = 0;
+    int end = 0;
+    int i = 0;
+    while ((find_chr(text, start, chr) != -1) && (i <= order))
+    {
+        start = end;
+        end = find_chr(text, start + 1, chr);
+        i++;
+    }
+    edges[0] = start;
+    edges[1] = end;
+}
+
+void split_chr(char *destination, const char *source, const char chr, const int part)
+{
+    find_edges(source, part, chr);
+    int len = edges[1] - edges[0] - 1;
+    int i = 0;
+    while (i < len)
+    {
+        destination[i] = source[i + edges[0] + 1];
+        i++;
+    }
+    destination[i] = 0;
+}
+
+float to_geo(char *coordinate, char *indicator)
+{
+    char d_str[5];
+    char m_str[12];
+    int len = strlen(coordinate);
+    if (len == 11)
+    {
+        memcpy(d_str, coordinate, 2);
+        memmove(coordinate, coordinate + 2, 9);
+    }
+    if (len == 12)
+    {
+        memcpy(d_str, coordinate, 3);
+        memmove(coordinate, coordinate + 3, 9);
+    }
+    memcpy(m_str, coordinate, 9);
+    float deg = atof(d_str);
+    float min = atof(m_str);
+    deg = deg + min / 60.0;
+
+    if (indicator[0] == 'S' || indicator[0] == 'W')
+        deg = 0 - deg;
+    return deg;
+}
+
+void to_date(char *date)
+{
+    // input: 190621
+    // output: 2021-06-21
+    char temp[12];
+    temp[0] = '2';
+    temp[1] = '0';
+    temp[2] = date[4];
+    temp[3] = date[5];
+    temp[4] = '-';
+    temp[5] = date[2];
+    temp[6] = date[3];
+    temp[7] = '-';
+    temp[8] = date[0];
+    temp[9] = date[1];
+    temp[10] = 0;
+    memcpy(date, temp, 11);
+}
+
+void to_time(char *time)
+{
+    // input: 035032.0
+    // output: 03:50:32
+    char temp[10];
+    temp[0] = time[0];
+    temp[1] = time[1];
+    temp[2] = ':';
+    temp[3] = time[2];
+    temp[4] = time[3];
+    temp[5] = ':';
+    temp[6] = time[4];
+    temp[7] = time[5];
+    temp[10] = 0;
+    memcpy(time, temp, 10);
 }
 /******************************************************************
 *********                       EOF                       *********
