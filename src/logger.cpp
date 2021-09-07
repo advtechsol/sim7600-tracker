@@ -8,6 +8,7 @@
 #include "..\Defines.h"
 
 #include "logger.h"
+#include "util.h"
 /******************************************************************
 *********                  Local Defines                  *********
 ******************************************************************/
@@ -34,13 +35,16 @@ File readIndexFile; //file to store data read index file
 ******************************************************************/
 bool init_logger(void)
 {
-    Serial.println("Init SD");
-    delay(500);
+    debug_println("Init SD");
+    pinMode(SPI_LORA_RFM95_CS, OUTPUT);
+    digitalWrite(SPI_LORA_RFM95_CS, HIGH);
+
+    os_delay_Ms(500);
     // check if the SD card is present and can be initialized:
     if (!SD.begin(SPI_SD_CARD_CS))
     {
-        Serial.println("card failed");
-        delay(500);
+        debug_println("card failed");
+        os_delay_Ms(500);
         // don't do anything more:
         return false;
     }
@@ -49,15 +53,15 @@ bool init_logger(void)
 
 void writetosd(char *payload)
 {
-    Serial.print("Sensor Data: ");
-    Serial.println(payload);
+    debug_print("Sensor Data: ");
+    debug_println(payload);
     if(SD.exists("data.csv"))
     {
-        Serial.println("data.csv found!");
+        debug_println("data.csv found!");
     }
     else
     {
-        Serial.println("data.csv does not exist!");
+        debug_println("data.csv does not exist!");
     }
 
     sensorDataFile = SD.open("data.csv", FILE_WRITE);
@@ -69,7 +73,7 @@ void writetosd(char *payload)
     // if the file isn't open, pop up an error:
     else
     {
-        Serial.println("could not open datalog file");
+        debug_println("could not open datalog file");
     }
 } // end writetosd()
 
@@ -80,7 +84,7 @@ bool read_from_sd(char *payload, uint32_t *packetCount, uint32_t *readIndexInt)
 
     if(SD.exists("readIndex.txt"))
     {
-        Serial.println("readIndex.txt found!");
+        debug_println("readIndex.txt found!");
         readIndexFile = SD.open("readIndex.txt", FILE_READ);
         if(readIndexFile.size() >= sizeof(readIndex))
         {
@@ -99,7 +103,7 @@ bool read_from_sd(char *payload, uint32_t *packetCount, uint32_t *readIndexInt)
     }
     else
     {
-        Serial.println("readIndex.txt does not exist!");
+        debug_println("readIndex.txt does not exist!");
         readIndexFile = SD.open("readIndex.txt", FILE_WRITE);
         readIndexFile.seek(0);
         readIndexFile.println(readIndex);
@@ -122,7 +126,7 @@ bool read_from_sd(char *payload, uint32_t *packetCount, uint32_t *readIndexInt)
 
     sensorDataFile.seek(*readIndexInt);
     dataString = sensorDataFile.readStringUntil('\n');
-    Serial.println(dataString);
+    debug_println(dataString);
     memcpy(payload, dataString.c_str(), dataString.length());
     *readIndexInt = sensorDataFile.position();
     *readIndexInt += 2;

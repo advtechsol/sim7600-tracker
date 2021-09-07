@@ -13,5 +13,6 @@ void tilt_sensor_isr();
 bool check_movement_timeout(void);
 bool log_sensor_data(void);
 float read_batV_buf(uint8_t *dataBuf);
+uint16_t get_batt_mvolts(void);
 
 #endif 

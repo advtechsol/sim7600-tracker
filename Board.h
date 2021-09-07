@@ -8,8 +8,16 @@
 /**
  * @brief Power sections controls
  * */
-#define GPIO_OUTPUT_MODEM_PWR_EN        8
+#define GPIO_OUTPUT_MODEM_PWR_EN        11//8
 #define ADC_BATTERY_VOLTAGE             A7
+
+/**
+ * @brief RFM95 Pin Connections
+ * */
+#define SPI_LORA_RFM95_CS               8
+#define GPIO_OUTPUT_LORA_RFM95_RST      4
+#define GPIO_INTERRUPT_LORA_RFM95_DIO0  3
+#define GPIO_INTERRUPT_LORA_RFM95_DIO1  6
 
 /**
  * @brief Keypad Pin Connections
