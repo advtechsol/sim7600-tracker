@@ -9,7 +9,6 @@
 ******************************************************************/
 #include <FreeRTOS_SAMD21.h>
 #include <avr/dtostrf.h>
-#include <FlashStorage.h>
 
 #include "Board.h"
 #include "Defines.h"
@@ -29,34 +28,30 @@
 /******************************************************************
 *********                Local Enumerations               *********
 ******************************************************************/
+typedef enum
+{
+    state_init = 1,
+    state_check_sms,
+    state_read_sensors,
+    state_log_data,
+    state_data_offload,
+    state_send_sms,
+    state_sleep,
+    state_wake
+} DeviceState_t;
 
+DeviceState_t deviceState = state_init;
 /******************************************************************
 *********                  Local Objects                  *********
 ******************************************************************/
-FlashStorage(storage, Config);
+
 /******************************************************************
 *********                  Local Variables                *********
 ******************************************************************/
-extern volatile bool flagOK;
-extern volatile bool flagERROR;
-volatile bool flagREG = false;
-volatile bool flagCheckGPS = false;
-extern volatile bool flagHTTP;
-volatile bool flagDOWNLOAD = false;
-volatile bool flagProcessing = false;
 extern volatile bool flagSendSMS;
-
-const int modem_size = 180;      // Size of Modem serila buffer
-char modem_buffer[modem_size];   // Modem serial buffer
-char modem_char;                 // Modem serial char
-volatile int modem_i;            // Modem serial index
-
-volatile bool flagLocate = false;
 extern volatile bool flagUpload;
 
-Config settings;
-TaskHandle_t Handle_rxTask;
-TaskHandle_t Handle_txTask;
+extern Config settings;
 /******************************************************************
 *********          Local Function Definitions             *********
 ******************************************************************/
@@ -66,208 +61,112 @@ TaskHandle_t Handle_txTask;
 ******************************************************************/
 void setup()
 {
-    delay(1000); // keep this to avoid USB crash
-    pinMode(GPIO_OUTPUT_STATUS_LED_0, OUTPUT);
-    pinMode(GPIO_OUTPUT_MODEM_PWR_EN, OUTPUT);
-    digitalWrite(GPIO_OUTPUT_STATUS_LED_0, HIGH);
-    digitalWrite(GPIO_OUTPUT_MODEM_PWR_EN, HIGH);
-    Serial.begin(230400);
-    delay(1000); // keep this to avoid USB crash
-    Serial1.begin(115200);
-    delay(5000); // delay to start software
-    Serial.println("... start!");
-    check_config();
-    xTaskCreate(task_tx_modem, "txModem", 512, NULL, tskIDLE_PRIORITY + 2, &Handle_txTask);
-    xTaskCreate(task_rx_modem, "rxModem", 512, NULL, tskIDLE_PRIORITY + 1, &Handle_rxTask);
-    vTaskStartScheduler();
+    init_debug_serial();
 
-    while (true)
-    {
-        Serial.println("OS Failed! \n");
-        delay(1000);
-    }
+    check_config();
+
+    os_delay_Ms(1000); // keep this to avoid USB crash
+    init_leds();
+
+    init_modem();    
+
+    init_logger();
+
+    init_rtc();
+
+    init_tilt_sensor();
+
+    debug_println("... start!");
 }
 
 void loop()
 {
-    int logging_counter = 0;
-    int upload_counter = 0;
-    int stationary_counter = 0;
-    int recovery_counter = 0;
-    int i = 0;
+    digitalWrite(GPIO_OUTPUT_STATUS_LED_2, HIGH);
 
-    while (true)
+    if (get_batt_mvolts() < BATTERY_LOW_VOLTAGE_THRESHOLD_MV)
     {
-        if (settings.recovery)
+        digitalWrite(GPIO_OUTPUT_STATUS_LED_2, LOW);
+        debug_println("Battery Voltage is below the Threshold.");
+        deviceState = state_sleep;
+    }
+
+    switch (deviceState)
+    {
+    case state_init:
+        debug_println("State: state_init");
+        if(sms_config())
         {
-            if (recovery_counter >= 10)
-            {
-                recovery_counter = 0;
-                flagLocate = true;
-                flagUpload = true;
-            }
+            while(state_modem_ok != send_command("GSN", 3));
+            send_command("CMEE=2", 10);
+            deviceState = state_check_sms;
+        }
+        else
+        {            
+            send_command("CRESET", 15);
+            os_delay_S(15);
+            send_command("?", 10);
+        }
+        break;
+    case state_check_sms:
+        debug_println("State: state_check_sms");
+        send_command("CMGRD=0", 8);
+        deviceState = state_read_sensors;
+        break;
+    case state_read_sensors:
+        debug_println("State: state_read_sensors");
+        get_location();
+        deviceState = state_log_data;
+        break;
+    case state_log_data:
+        debug_println("State: state_log_data");
+        deviceState = state_data_offload;
+        break;
+    case state_data_offload:
+        debug_println("State: state_data_offload");
+        upload_location();
+        if(flagSendSMS)
+        {
+            deviceState = state_send_sms;
         }
         else
         {
-            if (get_speed() >= 1)
-            {
-                if (logging_counter >= settings.logging_period)
-                {
-                    logging_counter = 0;
-                    flagLocate = true;
-                }
-            }
-            else
-            {
-                if (stationary_counter >= settings.stationary_period)
-                {
-                    stationary_counter = 0;
-                    flagLocate = true;
-                }
-            }
-            if (upload_counter >= settings.upload_period)
-            {
-                upload_counter = 0;
-                flagUpload = true;
-            }
+            deviceState = state_sleep;
         }
+        break;
+    case state_send_sms:
+        debug_println("State: state_send_sms");
+        send_sms();
+        flagSendSMS = false;
+        deviceState = state_sleep;
+        break;
+    case state_sleep:
+        debug_println("State: state_sleep");
+        alarmMatch();
 
-        if (i >= 10)
+        if(check_movement_timeout() || get_speed() >= 1)
         {
-            i = 0;
-            flagCheckGPS = true;
-        };
-
-        logging_counter++;
-        upload_counter++;
-        stationary_counter++;
-        recovery_counter++;
-        i++;
-
-        delay(1000);
-    }
-}
-
-static void task_rx_modem(void *pvParameters)
-{
-    const char mOK[] = "OK";
-    const char mERROR[] = "ERRO";
-    const char mCLOSED[] = "CLOS";
-    const char mCBC[] = "+CBC";
-    const char mCOP[] = "+COP";
-    const char mCSQ[] = "+CSQ";
-    const char mCGR[] = "+CGR";
-    const char mIPC[] = "+IPC";
-    const char mCGN[] = "+CGN";
-    const char mGSN[] = "8639"; // this is SIMCOMS id found on serial number
-    const char mRIN[] = "RING"; // when someones makes a call.. it should hang up
-    const char mHUP[] = "ATH";  // when someones makes a call.. it should hang up
-    const char mHTTP[] = "+HTTP";
-    const char mSMS[] = "#*,";
-
-    while (true)
-    {
-        while (Serial1.available() && !flagProcessing)
-        {
-            modem_char = Serial1.read();
-            Serial.print(modem_char);
-            modem_buffer[modem_i] = modem_char;
-            modem_i++;
-            if (modem_i >= modem_size)
-                modem_i = 0;
-            if ((modem_i >= 2) && ((modem_char == '\n') || (modem_char == '\n')))
-            {
-                flagProcessing = true;
-                modem_buffer[modem_i] = '\0';
-                if (memcmp(mOK, modem_buffer, 2) == 0)
-                    flagOK = true;
-                if (memcmp(mERROR, modem_buffer, 4) == 0)
-                    flagERROR = true;
-                if (memcmp(mHTTP, modem_buffer, 4) == 0)
-                    flagHTTP = true;
-                if (memcmp(mSMS, modem_buffer, 3) == 0)
-                {
-                    if (process_sms(&settings, modem_buffer))
-                    {
-                        storage.write(settings);
-                        print_settings(settings);
-                        Serial.println("... settings saved");
-                    }
-                }
-                if (memcmp(mCGN, modem_buffer, 4) == 0)
-                    process_gcn(modem_buffer);
-                if (memcmp(mGSN, modem_buffer, 4) == 0)
-                    process_gsn(modem_buffer);
-                modem_i = 0;
-                for (int i = 0; i < modem_size; i++)
-                    modem_buffer[i] = 0;
-                flagProcessing = false;
-            }
+            deviceState = state_check_sms;
+            break;
         }
-        os_delay_Ms(1);
+        /* Send device to sleep */
+        digitalWrite(GPIO_OUTPUT_STATUS_LED_2, LOW);
+        rtc_sleep();
+        deviceState = state_wake;
+        break;
+    case state_wake:
+        debug_println("State: state_wake");
+        /* Wake up the device */
+        wake_device();
+        // deviceState = state_check_sms;
+        deviceState = state_init;
+        break;
+    default:
+        debug_println("State: default");
+        deviceState = state_init;
+        break;
     }
-}
-
-static void task_tx_modem(void *pvParameters)
-{
-    while (true)
-    {
-        if (sms_config())
-        {
-            send_command("GSN", 3);
-            send_command("CMEE=2", 10);
-            while (true)
-            {
-                if (flagLocate)
-                {
-                    get_location(settings);
-                    flagLocate = false;
-                    flagCheckGPS = false;
-                }
-                if (flagUpload)
-                {
-                    upload_location();
-                    flagUpload = false;
-                }
-                if (flagCheckGPS)
-                {
-                    send_command("CGNSSINFO", 10);
-                    flagCheckGPS = false;
-                }
-
-                if (flagSendSMS)
-                {
-                    send_sms();
-                    flagSendSMS = false;
-                }
-                os_delay_Ms(100);
-            }
-        }
-        os_delay_S(1);
-    }
-}
-
-void check_config()
-{
-    settings = storage.read();
-    if (settings.valid)
-    {
-        Serial.println("... settings found");
-    }
-    else
-    {
-        Serial.println("... settings not found");
-        const char default_domain[] = "http://iotnetwork.com.au:5055/";
-        memcpy(settings.server, default_domain, strlen(default_domain));
-        settings.stationary_period = 300;
-        settings.logging_period = 30;
-        settings.upload_period = 300;
-        settings.recovery = false;
-        settings.valid = true;
-        storage.write(settings);
-        Serial.println("... settings saved");
-    }
-    print_settings(settings);
+    digitalWrite(GPIO_OUTPUT_STATUS_LED_2, LOW);
+    os_delay_Ms(10);
 }
 /******************************************************************
 *********                       EOF                       *********
