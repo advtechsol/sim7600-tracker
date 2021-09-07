@@ -5,12 +5,14 @@
 #include <RTCZero.h>
 #include <NMEAGPS.h>
 #include <FreeRTOS_SAMD21.h>
+#include <time.h>
 
 #include "..\Board.h"
 #include "..\Defines.h"
 
 #include "util.h"
 #include "sensor.h"
+#include "modem.h"
 /******************************************************************
 *********                  Local Defines                  *********
 ******************************************************************/
@@ -24,11 +26,15 @@
 ******************************************************************/
 RTCZero rtc; // Create an rtc object
 extern gps_fix fix;
+
+FlashStorage(storage, Config);
 /******************************************************************
 *********                  Local Variables                *********
 ******************************************************************/
 volatile bool logSensorDataNow = false; //a variable to keep check of the state.
 volatile int edges[2];
+
+Config settings;
 /******************************************************************
 *********          Local Function Definitions             *********
 ******************************************************************/
@@ -36,9 +42,10 @@ volatile int edges[2];
 /******************************************************************
 *********              Application Firmware               *********
 ******************************************************************/
+/**********                 LED Firmware                **********/
 bool init_leds(void)
 {
-    Serial.println("Init Led's");
+    debug_println("Init Led's");
     pinMode(GPIO_OUTPUT_STATUS_LED_0, OUTPUT);
     pinMode(GPIO_OUTPUT_STATUS_LED_1, OUTPUT);
     pinMode(GPIO_OUTPUT_STATUS_LED_2, OUTPUT);
@@ -50,15 +57,16 @@ void blinky(int repeats, int time)
     for (int i = 0; i < repeats; i++)
     {
         digitalWrite(GPIO_OUTPUT_STATUS_LED_0, HIGH);
-        delay(time);
+        os_delay_Ms(time);
         digitalWrite(GPIO_OUTPUT_STATUS_LED_0, LOW);
-        delay(time);
+        os_delay_Ms(time);
     }
 }
-
+/******************************************************************/
+/**********                   RTC Firmware               **********/
 bool init_rtc(void)
 {
-    Serial.println("Init RTC");
+    debug_println("Init RTC");
     rtc.begin();                           // Start the RTC now that BEACON_INTERVAL has been updated
     rtc.setAlarmSeconds(rtc.getSeconds()); // Initialise RTC Alarm Seconds
 
@@ -71,34 +79,61 @@ bool init_rtc(void)
 
 void set_rtc()
 {
-    Serial.println("set rtc time, from gps time (UTC)...");
+    debug_println("set rtc time, from gps time (UTC)...");
     rtc.setTime(fix.dateTime.hours, fix.dateTime.minutes, fix.dateTime.seconds);
-    rtc.setDate(fix.dateTime.year, fix.dateTime.month, fix.dateTime.date);
-    Serial.println("RTC ALARM");
-    Serial.print("current minutes: ");
-    Serial.println(rtc.getMinutes());
-    Serial.print("alarm will activate in ");
-    Serial.println(rtc.getMinutes() + APP_DEVICE_NO_MOTION_INTERVAL_S / 60UL);
-    Serial.print(rtc.getYear());
-    Serial.print(rtc.getMonth());
-    Serial.println(rtc.getDay());
+    rtc.setDate(fix.dateTime.date, fix.dateTime.month, fix.dateTime.year);
+    debug_println("RTC ALARM");
+    debug_print("current minutes: ");
+    debug_println(rtc.getMinutes());
+    debug_print("alarm will activate in ");
+    debug_println(rtc.getMinutes() + APP_DEVICE_NO_MOTION_INTERVAL_S / 60);
+    debug_print(rtc.getYear());
+    debug_print(rtc.getMonth());
+    debug_println(rtc.getDay());
+}
+
+void set_rtc(const char* dateToday, const char* timeNow)
+{
+    //2021-06-21 @param dateToday
+    //03:50:32 @param timeNow   
+    struct tm timeGPS;
+
+    //2021-06-21
+    debug_print(dateToday);
+    sscanf(dateToday, "%04d-%02d-%02d", &timeGPS.tm_year, &timeGPS.tm_mon, &timeGPS.tm_mday);
+    timeGPS.tm_year %= 1000;
+    //03:50:32            
+    debug_print(timeNow);
+    sscanf(timeNow, "%02d:%02d:%02d", &timeGPS.tm_hour, &timeGPS.tm_min, &timeGPS.tm_sec);
+
+    debug_println("set rtc time, from gps time (UTC)...");
+    rtc.setTime(timeGPS.tm_hour, timeGPS.tm_min, timeGPS.tm_sec);
+    rtc.setDate(timeGPS.tm_mday, timeGPS.tm_mon, timeGPS.tm_year);
+    debug_println("RTC ALARM");
+    debug_print("current minutes: ");
+    debug_println(rtc.getMinutes());
+    debug_print("alarm will activate in ");
+    debug_println(rtc.getMinutes() + APP_DEVICE_NO_MOTION_INTERVAL_S / 60);
+    debug_print(rtc.getYear());
+    debug_print(rtc.getMonth());
+    debug_println(rtc.getDay());
 }
 
 void set_alarm()
 {
-    Serial.println("set rtc alarm");
-    delay(250);
+    debug_println("set rtc alarm");
+    os_delay_Ms(250);
     rtc.begin();                           // Start the RTC now that BEACON_INTERVAL has been updated
     rtc.setAlarmSeconds(rtc.getSeconds()); // Initialise RTC Alarm Seconds
     alarmMatch();                          // Set next alarm time using updated BEACON_INTERVAL
-    Serial.print("iterationCounter");
-    // Serial.println(get_iteration_counter());
+    debug_print("iterationCounter");
+    // debug_println(get_iteration_counter());
     int rtc_mins = rtc.getMinutes(); // Read the RTC minutes
-    Serial.print("rtc_mins: ");
-    Serial.println(rtc_mins);
+    debug_print("rtc_mins: ");
+    debug_println(rtc_mins);
     int rtc_hours = rtc.getHours(); // Read the RTC hours
-    Serial.print("rtc_hours: ");
-    Serial.println(rtc_hours);
+    debug_print("rtc_hours: ");
+    debug_println(rtc_hours);
     rtc_mins = rtc_mins + APP_DEVICE_NO_MOTION_INTERVAL_S / 60UL; // Add the BEACON_INTERVAL to the RTC minutes
     while (rtc_mins >= 60)
     {                              // If there has been an hour roll over
@@ -117,49 +152,59 @@ void rtc_sleep()
     blinky(5, 250);
 
     // Get ready for sleep
-    gps_stop();
-    delay(1000); // Wait for serial ports to clear
+    modem_stop();
+    os_delay_Ms(1000); // Wait for serial ports to clear
 
     // Turn LED off
     blinky(10, BLINK_TIME_INTERVAL);
 
     // Turn off LORA
     // try keeping the LORA on... digitalWrite(GPIO_OUTPUT_GPS_PWR_EN, LOW);
-
     if (check_movement_timeout())
     {
-        Serial.println("BEACON_INTERVAL too short, not economic to switch off GPS");
+        debug_println("BEACON_INTERVAL too short, not economic to switch off GPS");
     }
     else
     {
-        gps_turn_pwr(LOW); // Disable the GPS
+        modem_turn_pwr(LOW); // Disable the GPS
     }
 
     // Close and detach the serial console (as per CaveMoa's SimpleSleepUSB)
-    Serial.println("Going to sleep until next alarm time...");
-    delay(1000);        // Wait for serial port to clear
-    Serial.end();       // Close the serial console
+    debug_println("Going to sleep until next alarm time...");
+    os_delay_Ms(1000);        // Wait for serial port to clear
+    close_debug_serial();       // Close the serial console
     USBDevice.detach(); // Safely detach the USB prior to sleeping
-    delay(250);
+    os_delay_Ms(250);
     // Sleep until next alarm match
     rtc.standbyMode();
 }
 
-/************************** RTC alarm interrupt*****************************************/
 void alarmMatch()
 {
-    uint8_t rtc_mins = rtc.getMinutes(); // Read the RTC minutes
+    uint32_t rtc_secs = rtc.getSeconds(); //Read RTC seconds
+    uint16_t rtc_mins = rtc.getMinutes(); // Read the RTC minutes
     uint8_t rtc_hours = rtc.getHours();  // Read the RTC hours
 
-    if (check_movement_timeout())
+    if(settings.recovery)
     {
-        Serial.println("While in motion ALARM occured...");
-        rtc_mins = rtc_mins + APP_DEVICE_IN_MOTION_INTERVAL_S / 60UL; // Add the BEACON_INTERVAL to the RTC minutes}
+        debug_println("recovery ALARM occured...");
+        rtc_secs = rtc_secs + settings.recoveryPeriod;
+    }
+    else if (check_movement_timeout())
+    {
+        debug_println("While in motion ALARM occured...");
+        rtc_secs = rtc_secs + settings.inMotionPeriod; // Add the BEACON_INTERVAL to the RTC minutes}
     }
     else
     {
-        Serial.println("no motion ALARM occured...");
-        rtc_mins = rtc_mins + APP_DEVICE_NO_MOTION_INTERVAL_S / 60UL; // Add the MOVEMENT_INTERVAL to the RTC minutes}
+        debug_println("no motion ALARM occured...");
+        rtc_secs = rtc_secs + settings.noMotionPeriod; // Add the MOVEMENT_INTERVAL to the RTC minutes}
+    }
+
+    while (rtc_secs >= 60)
+    {                   // If there has been an hour roll over
+        rtc_secs -= 60; // Subtract 60 seconds
+        rtc_mins += 1; // Add a minute
     }
 
     while (rtc_mins >= 60)
@@ -167,7 +212,9 @@ void alarmMatch()
         rtc_mins -= 60; // Subtract 60 minutes
         rtc_hours += 1; // Add an hour
     }
+
     rtc_hours = rtc_hours % 24;    // Check for a day roll over
+    rtc.setAlarmSeconds(rtc_secs); // Set next alarm time (seconds)
     rtc.setAlarmMinutes(rtc_mins); // Set next alarm time (minutes)
     rtc.setAlarmHours(rtc_hours);  // Set next alarm time (hours)
 
@@ -177,15 +224,17 @@ void alarmMatch()
 void wake_device()
 {
     digitalWrite(GPIO_OUTPUT_STATUS_LED_0, LOW);
-    //digitalWrite(11, LOW); // HIGH IS ON
 
     USBDevice.attach(); // Re-attach the USB, audible sound on windows machine
-    delay(250);         // Delay added to make serial more reliable
-    Serial.begin(115200);
-    delay(3000);
-    Serial.println("device awake");
+    os_delay_Ms(250);         // Delay added to make serial more reliable
+    init_debug_serial();
+    os_delay_Ms(3000);
+    debug_println("device awake");
 
-    init_gps();
+    if(!check_movement_timeout())
+    {
+        init_modem();
+    }
 }
 
 bool get_status_log_sensor_data(void)
@@ -201,19 +250,161 @@ void get_epoch_time_bytes(uint8_t *dataBuf)
     *dataBuf++ = (uint8_t)((epochTimeNow >> 16) & 0xff);
     *dataBuf++ = (uint8_t)((epochTimeNow >> 24) & 0xff);
 }
-
-// - - - - - - - - Delay Helpers - - - - - - - -
-void os_delay_Us(int us)
+/******************************************************************/
+/**********                   Flash Storage              **********/
+void check_config()
 {
-    vTaskDelay(us / portTICK_PERIOD_US);
+    storage.read(&settings);
+    if (settings.valid)
+    {
+        debug_println("... settings found");
+    }
+    else
+    {
+        debug_println("... settings not found");
+        const char default_domain[] = "http://iotnetwork.com.au:5055/";
+        memcpy(settings.server, default_domain, strlen(default_domain));
+        settings.noMotionPeriod = APP_DEVICE_NO_MOTION_INTERVAL_S;
+        settings.inMotionPeriod = APP_DEVICE_IN_MOTION_INTERVAL_S;
+        settings.noMotionUploadPeriod = APP_DEVICE_NO_MOTION_UPLOAD_INTERVAL_S;
+        settings.inMotionUploadPeriod = APP_DEVICE_IN_MOTION_UPLOAD_INTERVAL_S;
+        settings.recoveryPeriod = APP_DEVICE_RECOVERY_INTERVAL_S;
+        settings.recovery = false;
+        settings.valid = true;
+        store_settings();
+        debug_println("... settings saved");
+    }
+    print_settings();
 }
 
-void os_delay_Ms(int ms)
+void get_settings(Config *ptrSettings)
 {
-    vTaskDelay((ms * 1000) / portTICK_PERIOD_US);
+    ptrSettings = &settings;
 }
 
-void os_delay_S(int s)
+void store_settings(void)
+{
+    storage.write(settings);
+}
+
+void print_settings(void)
+{
+    debug_print("... server: ");
+    debug_println(settings.server);
+    debug_print("... no motion: ");
+    debug_println(settings.noMotionPeriod);
+    debug_print("... in motion: ");
+    debug_println(settings.inMotionPeriod);
+    debug_print("... no motion upload: ");
+    debug_println(settings.noMotionUploadPeriod);
+    debug_print("... in motion upload: ");
+    debug_println(settings.inMotionUploadPeriod);
+    debug_print("... in recovery period: ");
+    debug_println(settings.recoveryPeriod);
+    debug_print("... recovery: ");
+    debug_println(settings.recovery);
+}
+/******************************************************************/
+/**********                   Debu Serial                **********/
+void init_debug_serial(void)
+{
+#if APP_MODE_DEBUG
+    Serial.begin(230400);
+    // while(!Serial); //Uncomment for debugging purposes
+
+    os_delay_Ms(2000);
+#endif
+}
+
+void debug_print(String buf)
+{
+#if APP_MODE_DEBUG
+    Serial.print(buf);
+#endif
+}
+
+void debug_print(char c)
+{
+#if APP_MODE_DEBUG
+    Serial.print(c);
+#endif
+}
+
+void debug_print(int i)
+{
+#if APP_MODE_DEBUG
+    Serial.print(i);
+#endif
+}
+
+void debug_print(float f)
+{
+#if APP_MODE_DEBUG
+    Serial.print(f);
+#endif
+}
+
+void debug_print(float f, uint8_t decimals)
+{
+#if APP_MODE_DEBUG
+    Serial.print(f, decimals);
+#endif
+}
+
+void debug_println(String buf)
+{
+#if APP_MODE_DEBUG
+    Serial.println(buf);
+#endif
+}
+
+void debug_println(char c)
+{
+#if APP_MODE_DEBUG
+    Serial.println(c);
+#endif
+}
+
+void debug_println(int i)
+{
+#if APP_MODE_DEBUG
+    Serial.println(i);
+#endif
+}
+
+void debug_println(float f)
+{
+#if APP_MODE_DEBUG
+    Serial.println(f);
+#endif
+}
+
+void debug_println(float f, uint8_t decimals)
+{
+#if APP_MODE_DEBUG
+    Serial.println(f, decimals);
+#endif
+}
+
+void close_debug_serial(void)
+{
+#if APP_MODE_DEBUG
+    Serial.end();
+#endif
+}
+/******************************************************************/
+/**********                   Delay Helpers              **********/
+void os_delay_Us(uint16_t us)
+{
+    delayMicroseconds(us);
+}
+
+void os_delay_Ms(uint16_t ms)
+{
+    delay(ms);
+}
+
+void os_delay_S(uint16_t s)
 {
     while (s > 0)
     {
@@ -221,8 +412,8 @@ void os_delay_S(int s)
         s--;
     }
 }
-
-// - - - - - - - - - - - - - - - - - - - - - - -
+/******************************************************************/
+/**********               String Operations              **********/
 int find_chr(const char *text, const int start, const char chr)
 {
     char *pch;

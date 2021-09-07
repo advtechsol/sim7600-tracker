@@ -50,6 +50,8 @@ volatile uint32_t last_movement_time = 0;
 
 static uint8_t payload[32];
 static uint8_t payloadBase64[32] = {0};
+
+extern Config settings;
 /******************************************************************
 *********          Local Function Definitions             *********
 ******************************************************************/
@@ -59,7 +61,7 @@ bool init_gps_gpio(void);
 ******************************************************************/
 bool init_gps(void)
 {
-    Serial.println("Init GPS");
+    debug_println("Init GPS");
     init_gps_gpio();
     gps_turn_pwr(HIGH);
 
@@ -135,7 +137,7 @@ bool readGPS(void)
             }
             else
                 // Waiting...
-                Serial.println("waiting for gps...");
+                debug_println("waiting for gps...");
 
             // Instead of delay, count the number of GPS fixes
             gpsSeconds++;
@@ -189,7 +191,7 @@ void tilt_sensor_isr()
     //if NOT already in movement_interval enabled mode...
     if (!use_movement_interval)
     {
-        Serial.println("First time interrupt");
+        debug_println("First time interrupt");
         //update alarm setting..
         use_movement_interval = true;
     }
@@ -199,7 +201,7 @@ void tilt_sensor_isr()
 
 bool check_movement_timeout(void)
 {
-    if(millis() - last_movement_time > (APP_DEVICE_IN_MOTION_INTERVAL_S * 2 * 1000))
+    if(millis() - last_movement_time > (settings.inMotionPeriod * 2 * 1000))
     {
         use_movement_interval = false;   
     }
@@ -221,7 +223,7 @@ bool log_sensor_data(void)
         set_rtc();
     }
 
-    Serial.println("GPS Location: Lat: " + String(get_latitude()) + ", Lon: " + String(get_longitude()) + ", Alt: " + String(get_latitude()));
+    debug_println("GPS Location: Lat: " + String(get_latitude()) + ", Lon: " + String(get_longitude()) + ", Alt: " + String(get_latitude()));
 
     get_epoch_time_bytes(payloadPtr);
 
@@ -248,10 +250,10 @@ bool log_sensor_data(void)
 
     //Encode the data to base 64
     rbase64_encode((char *)payloadBase64, (char *)payload, payloadPtr - payload - 1);
-    Serial.println((char *)payloadBase64);
+    debug_println((char *)payloadBase64);
     writetosd((char *)payloadBase64);
 
-    Serial.println(F("Packet queued in the SD Card"));
+    debug_println(F("Packet queued in the SD Card"));
     // Next TX is scheduled after TX_COMPLETE event.
 }
 
@@ -262,16 +264,35 @@ float read_batV_buf(uint8_t *dataBuf)
     for(uint8_t i = 0; i < 10; i++)
     {
         measuredvbat += analogRead(ADC_BATTERY_VOLTAGE);
-        delay(10);
+        os_delay_Ms(10);
     }
     measuredvbat /= 10;
-    measuredvbat = ((float)measuredvbat * 4.3 * 3.3) / 10.23;
-    Serial.print("VBat: ");
-    Serial.println(measuredvbat);
+    measuredvbat = ((float)measuredvbat * 4.3 * 3.3) / 1.023;
+    debug_print("VBat: ");
+    debug_println(measuredvbat);
     *dataBuf++ = (unsigned char)(measuredvbat & 0xff); //we're unsigned
     *dataBuf++ = (unsigned char)((measuredvbat >> 8) & 0xff); //we're unsigned
 
     return measuredvbat/100;
+}
+
+/**
+ * @brief Measures battery voltage in milli volts
+ * */
+uint16_t get_batt_mvolts(void)
+{
+    uint16_t measuredvbat = 0;
+
+    for(uint8_t i = 0; i < 10; i++)
+    {
+        measuredvbat += analogRead(ADC_BATTERY_VOLTAGE);
+        os_delay_Ms(10);
+    }
+    measuredvbat /= 10;
+    measuredvbat = ((float)measuredvbat * 4.3 * 3.3) / 1.023;
+    debug_print("Battery Volatge (mV): ");
+    debug_println(measuredvbat);
+    return measuredvbat;
 }
 /******************************************************************
 *********                       EOF                       *********
