@@ -27,6 +27,7 @@ void alarmMatch();
 void wake_device();
 bool get_status_log_sensor_data(void);
 void get_epoch_time_bytes(uint8_t *dataBuf);
+void attachInterruptWakeup(uint32_t pin, voidFuncPtr callback, uint32_t mode);
 
 void check_config();
 void get_settings(Config *ptrSettings);

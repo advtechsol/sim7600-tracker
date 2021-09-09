@@ -177,15 +177,13 @@ float get_altitude(void)
 bool init_tilt_sensor(void)
 {
     pinMode(GPIO_INTERRUPT_TILT_SENSOR, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(GPIO_INTERRUPT_TILT_SENSOR), tilt_sensor_isr, CHANGE);
+    attachInterruptWakeup(GPIO_INTERRUPT_TILT_SENSOR, tilt_sensor_isr, CHANGE);
 
     return true;
 }
 
 void tilt_sensor_isr()
 {
-    detachInterrupt(digitalPinToInterrupt(GPIO_INTERRUPT_TILT_SENSOR));
-
     last_movement_time = millis(); //Noting the time when a movement occured.
 
     //if NOT already in movement_interval enabled mode...
@@ -195,8 +193,6 @@ void tilt_sensor_isr()
         //update alarm setting..
         use_movement_interval = true;
     }
-
-    attachInterrupt(digitalPinToInterrupt(GPIO_INTERRUPT_TILT_SENSOR), tilt_sensor_isr, CHANGE);
 }
 
 bool check_movement_timeout(void)
