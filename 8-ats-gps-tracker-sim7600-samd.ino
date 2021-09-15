@@ -90,6 +90,11 @@ void loop()
         deviceState = state_sleep;
     }
 
+    if(check_movement_timeout())
+    {
+        set_tilt_sensor_interrupt(false);
+    }
+
     switch (deviceState)
     {
     case state_init:
