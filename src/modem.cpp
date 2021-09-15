@@ -72,6 +72,7 @@ const char sSMS[] PROGMEM = "sms";
 //Modem responses
 const char mOK[]    PROGMEM = "OK";
 const char mERROR[] PROGMEM = "ERRO";
+const char mRDY[]   PROGMEM = "PB DONE";
 const char mHTTP[]  PROGMEM = "+HTTP";
 const char mGSN[]   PROGMEM = "8639"; // this is SIMCOMS id found on serial number
 const char mCGN[]   PROGMEM = "+CGN";
@@ -97,17 +98,20 @@ bool init_modem(void)
     init_modem_gpio();
     modem_reset_state(HIGH);
     modem_turn_pwr(HIGH);
-    os_delay_Ms(1000);
-
-    // modem_reset();
-    os_delay_Ms(2000);
 
     // Modem init
     Serial1.begin(115200);
+    while(!Serial1)
+    {
+        debug_println("Modem serial failed!");
+        os_delay_Ms(500);
+    }
 
-    modem_power();
-
-    send_command("?", 10);
+    while(state_modem_error != send_command("?", 15))
+    {
+        debug_println("Waiting for modem to respond");
+        os_delay_Ms(500);
+    }
 
     debug_println("Modem initialized");
 
@@ -345,6 +349,11 @@ ModemResponseState_t get_modem_response(void)
                 modemResponse = state_modem_error;
                 goto  MODEM_RESPONSE;
             }
+            if (strstr(modem_buffer, mRDY))
+            {
+                modemResponse = state_modem_ready;
+                goto  MODEM_RESPONSE;
+            }
             if (strstr(modem_buffer, mHTTP))
             {
                 modemResponse = state_modem_http;
@@ -517,6 +526,7 @@ bool upload_location(void)
 
 bool modem_stop(void)
 {
+    debug_println("Deinitializing modem!");
     Serial1.end();
     return true;
 }

@@ -107,9 +107,8 @@ void loop()
         }
         else
         {            
-            send_command("CRESET", 15);
-            os_delay_S(15);
-            send_command("?", 10);
+            send_command("CRESET", 5);
+            send_command("?", 15);
         }
         break;
     case state_check_sms:
@@ -148,11 +147,6 @@ void loop()
         debug_println("State: state_sleep");
         alarmMatch();
 
-        if(check_movement_timeout() || get_speed() >= 1)
-        {
-            deviceState = state_check_sms;
-            break;
-        }
         /* Send device to sleep */
         digitalWrite(GPIO_OUTPUT_STATUS_LED_2, LOW);
         rtc_sleep();
