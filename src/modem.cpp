@@ -72,6 +72,7 @@ const char sSMS[] PROGMEM = "sms";
 //Modem responses
 const char mOK[]    PROGMEM = "OK";
 const char mERROR[] PROGMEM = "ERRO";
+const char mRDY[]   PROGMEM = "PB DONE";
 const char mHTTP[]  PROGMEM = "+HTTP";
 const char mGSN[]   PROGMEM = "8639"; // this is SIMCOMS id found on serial number
 const char mCGN[]   PROGMEM = "+CGN";
@@ -97,17 +98,20 @@ bool init_modem(void)
     init_modem_gpio();
     modem_reset_state(HIGH);
     modem_turn_pwr(HIGH);
-    os_delay_Ms(1000);
-
-    // modem_reset();
-    os_delay_Ms(2000);
 
     // Modem init
     Serial1.begin(115200);
+    while(!Serial1)
+    {
+        debug_println("Modem serial failed!");
+        os_delay_Ms(500);
+    }
 
-    modem_power();
-
-    send_command("?", 10);
+    while(state_modem_error != send_command("?", 15))
+    {
+        debug_println("Waiting for modem to respond");
+        os_delay_Ms(500);
+    }
 
     debug_println("Modem initialized");
 
@@ -154,17 +158,6 @@ void modem_power(void)
     os_delay_S(3);
     modem_turn_pwr(HIGH);
     os_delay_S(10);
-}
-
-void turn_rf_on(void)
-{
-    send_command(PSTR("CFUN=1"), 5);
-    os_delay_S(5);
-}
-
-void turn_rf_off(void)
-{
-    send_command(PSTR("CFUN=0"), 5);
 }
 
 // Read modem IMEI
@@ -345,6 +338,11 @@ ModemResponseState_t get_modem_response(void)
                 modemResponse = state_modem_error;
                 goto  MODEM_RESPONSE;
             }
+            if (strstr(modem_buffer, mRDY))
+            {
+                modemResponse = state_modem_ready;
+                goto  MODEM_RESPONSE;
+            }
             if (strstr(modem_buffer, mHTTP))
             {
                 modemResponse = state_modem_http;
@@ -395,34 +393,6 @@ void create_command(const char *server)
         server, GSN, latitude, longitude, date, timeBuf, hdop, altitude, speed, course);
 }
 
-void init_http(void)
-{
-    // stop_http();
-    send_command(PSTR("HTTPTERM"), 3);
-    os_delay_S(5);
-    while(state_modem_ok != send_command(PSTR("HTTPINIT"), 3))
-    {
-        os_delay_Ms(100);
-    }
-}
-
-void post_http(void)
-{
-    send_command(commandBuffer, 5);
-    while (state_modem_ok != send_command(PSTR("HTTPACTION=1"), 15))
-    {
-        os_delay_Ms(100);
-    }
-}
-
-void stop_http(void)
-{
-    while (state_modem_ok != send_command(PSTR("HTTPTERM"), 3))
-    {
-        os_delay_Ms(100);
-    }
-}
-
 bool sms_config(void)
 {
     bool result = (state_modem_ok == send_command(PSTR("CSMS=0"), 5)) &&
@@ -450,10 +420,12 @@ void save_on_memory(volatile uint8_t *memoryCounterPtr, char *commandBufferPtr)
 void get_location(void)
 {
     uint32_t timeNow = millis();
+    uint32_t timeOut = millis();
 
     while (!flagGNS || (millis() - timeNow < (5 * 60 * 1000)))
     {
-        while (state_modem_ok != send_command(PSTR("CGNSSINFO"), 10))
+        timeOut = millis();
+        while ((state_modem_ok != send_command(PSTR("CGNSSINFO"), 10)) && (millis() - timeOut < APP_MODEM_TIMEOUT_MS))
             ;
         if (flagGNS)
         {
@@ -465,9 +437,65 @@ void get_location(void)
             // flagGNS = false;
             break;
         }
-        os_delay_Ms(500);
+        os_delay_Ms(1000);
     }
     flagGNS = false;
+}
+
+void turn_rf_on(void)
+{
+    send_command(PSTR("CFUN=1"), 5);
+    os_delay_S(5);
+}
+
+void turn_rf_off(void)
+{
+    send_command(PSTR("CFUN=0"), 5);
+}
+
+bool init_http(void)
+{
+    uint32_t timeNow = millis();
+    volatile ModemResponseState_t modemStatus = state_no_response;
+    // stop_http();
+    send_command(PSTR("HTTPTERM"), 3);
+    os_delay_Ms(100);
+    while((state_modem_ok != modemStatus) && (millis() - timeNow < APP_MODEM_TIMEOUT_MS))
+    {
+        modemStatus = send_command(PSTR("HTTPINIT"), 3);
+        os_delay_Ms(100);
+    }
+
+    return !(bool)modemStatus;
+}
+
+bool post_http(void)
+{
+    uint32_t timeNow = millis();
+    volatile ModemResponseState_t modemStatus = state_no_response;
+
+    send_command(commandBuffer, 5);
+    while ((state_modem_ok != modemStatus) && (millis() - timeNow < APP_MODEM_TIMEOUT_MS))
+    {
+        modemStatus = send_command(PSTR("HTTPACTION=1"), 15);
+        os_delay_Ms(100);
+    }
+
+    return !(bool)modemStatus;
+}
+
+bool stop_http(void)
+{
+    uint32_t timeNow = millis();
+    volatile ModemResponseState_t modemStatus = state_no_response;
+    
+    while ((state_modem_ok != modemStatus) && (millis() - timeNow < APP_MODEM_TIMEOUT_MS))
+    {
+        modemStatus = send_command(PSTR("HTTPTERM"), 3);
+        os_delay_Ms(100);
+    }
+
+    return !(bool)modemStatus;
 }
 
 bool upload_location(void)
@@ -494,8 +522,13 @@ bool upload_location(void)
     }
 
     if (spd < 1)
+    {
         turn_rf_on();
-    init_http();    
+    }
+    if(!init_http())
+    {
+        return false;
+    }
 
     debug_println("http initialized!");
 
@@ -504,19 +537,26 @@ bool upload_location(void)
         memset(commandBuffer, 0, sizeof(commandBuffer));
         memcpy(commandBuffer, memory[i], strlen(memory[i]));
         // debug_println(memory[i]);
-        post_http();
+        if(!post_http())
+        {
+            return false;
+        }
     }
     memoryCounter = 0;
-    stop_http();
+    if(!stop_http())
+    {
+        return false;
+    }
     if (spd < 1)
         turn_rf_off();
     flagUpload = false;
 
-    return false;
+    return true;
 }
 
 bool modem_stop(void)
 {
+    debug_println("Deinitializing modem!");
     Serial1.end();
     return true;
 }
