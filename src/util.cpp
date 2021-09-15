@@ -240,10 +240,7 @@ void wake_device()
     os_delay_Ms(3000);
     debug_println("device awake");
 
-    if(!check_movement_timeout())
-    {
-        init_modem();
-    }
+    init_modem();
 }
 
 bool get_status_log_sensor_data(void)

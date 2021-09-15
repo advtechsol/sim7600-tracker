@@ -27,7 +27,7 @@
 /**
  * @brief Tilt Sensor
  * */
-#define GPIO_INTERRUPT_TILT_SENSOR      A5
+#define GPIO_INTERRUPT_TILT_SENSOR      12//A5
 
 /**
  * @brief SD Card Pin Connections
