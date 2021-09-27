@@ -123,13 +123,28 @@ bool init_modem(void)
 bool init_modem_gpio(void)
 {
     pinMode(GPIO_OUTPUT_MODEM_PWR_EN, OUTPUT);
+    digitalWrite(GPIO_OUTPUT_MODEM_PWR_EN, HIGH);
+    os_delay_Ms(500);
 
     return true;
 }
 
 bool modem_turn_pwr(bool on_off_state)
 {
-    digitalWrite(GPIO_OUTPUT_MODEM_PWR_EN, on_off_state);
+    if(on_off_state)
+    {
+        digitalWrite(GPIO_OUTPUT_MODEM_PWR_EN, LOW);
+        os_delay_Ms(1000);
+        digitalWrite(GPIO_OUTPUT_MODEM_PWR_EN, HIGH);
+        os_delay_Ms(100);
+    }
+    else
+    {
+        digitalWrite(GPIO_OUTPUT_MODEM_PWR_EN, LOW);
+        os_delay_Ms(2500);
+        digitalWrite(GPIO_OUTPUT_MODEM_PWR_EN, HIGH);
+        os_delay_Ms(100);
+    }
 
     return true;
 }
