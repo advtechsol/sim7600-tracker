@@ -9,6 +9,7 @@ float get_latitude(void);
 float get_longitude(void);
 float get_altitude(void);
 bool init_tilt_sensor(void);
+void set_tilt_sensor_interrupt(bool state);
 void tilt_sensor_isr();
 bool check_movement_timeout(void);
 bool log_sensor_data(void);

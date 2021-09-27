@@ -20,6 +20,11 @@
 #define		APP_DEVICE_RECOVERY_INTERVAL_S           10
 
 /**
+ * @brief SIM7X00 Modem related definitions
+ */
+#define     APP_MODEM_TIMEOUT_MS                     4000
+
+/**
  * @brief LoRaWAN related definitions
  */
 #define     DATA_TX_INTERVAL_S                      30

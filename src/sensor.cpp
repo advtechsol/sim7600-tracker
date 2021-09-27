@@ -176,33 +176,44 @@ float get_altitude(void)
 
 bool init_tilt_sensor(void)
 {
+    debug_println("Tilt sensor init!");
     pinMode(GPIO_INTERRUPT_TILT_SENSOR, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(GPIO_INTERRUPT_TILT_SENSOR), tilt_sensor_isr, CHANGE);
+    attachInterruptWakeup(GPIO_INTERRUPT_TILT_SENSOR, tilt_sensor_isr, CHANGE);
 
     return true;
 }
 
+void set_tilt_sensor_interrupt(bool state)
+{
+    if(state)
+    {
+        attachInterrupt(GPIO_INTERRUPT_TILT_SENSOR, tilt_sensor_isr, CHANGE);
+    }
+    else
+    {
+        detachInterrupt(GPIO_INTERRUPT_TILT_SENSOR);
+    }
+}
+
 void tilt_sensor_isr()
 {
-    detachInterrupt(digitalPinToInterrupt(GPIO_INTERRUPT_TILT_SENSOR));
-
     last_movement_time = millis(); //Noting the time when a movement occured.
 
     //if NOT already in movement_interval enabled mode...
     if (!use_movement_interval)
     {
-        debug_println("First time interrupt");
+        // debug_println("First time interrupt");
         //update alarm setting..
         use_movement_interval = true;
     }
-
-    attachInterrupt(digitalPinToInterrupt(GPIO_INTERRUPT_TILT_SENSOR), tilt_sensor_isr, CHANGE);
 }
 
 bool check_movement_timeout(void)
 {
-    if(millis() - last_movement_time > (settings.inMotionPeriod * 2 * 1000))
+    if(use_movement_interval && (millis() - last_movement_time > (settings.inMotionPeriod * 2 * 1000)))
     {
+        debug_println("No Movement Recorded!");
+        set_tilt_sensor_interrupt(true);
         use_movement_interval = false;   
     }
     return use_movement_interval;

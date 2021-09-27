@@ -7,6 +7,7 @@ typedef enum{
     state_no_response = -1,
     state_modem_ok,
     state_modem_error,
+    state_modem_ready,
     state_modem_http,
     state_modem_start,
     state_modem_gsn,
